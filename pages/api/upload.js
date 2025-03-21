@@ -1,49 +1,58 @@
 // pages/api/upload.js
+import nextConnect from 'next-connect';
+import multer from 'multer';
 import aws from 'aws-sdk';
 
+const upload = multer();
+
+// Setup AWS S3
 const s3 = new aws.S3({
   accessKeyId: process.env.AMPLIFY_ACCESS_KEY_ID,
   secretAccessKey: process.env.AMPLIFY_SECRET_ACCESS_KEY,
   region: process.env.AMPLIFY_REGION,
 });
 
+// Disable default body parser
 export const config = {
   api: {
     bodyParser: false,
   },
 };
 
-import formidable from 'formidable';
-import fs from 'fs';
+const apiRoute = nextConnect({
+  onError(error, req, res) {
+    console.error(error);
+    res.status(501).json({ error: `Something went wrong! ${error.message}` });
+  },
+  onNoMatch(req, res) {
+    res.status(405).json({ error: `Method '${req.method}' Not Allowed` });
+  },
+});
 
-export default async function handler(req, res) {
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+apiRoute.use(upload.single('file'));
 
-  const form = new formidable.IncomingForm({ keepExtensions: true });
+apiRoute.post(async (req, res) => {
+  try {
+    const file = req.file;
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) {
-      return res.status(500).json({ error: 'Error parsing the file' });
+    if (!file) {
+      return res.status(400).json({ error: 'No file provided' });
     }
-
-    const file = files.file;
-    const fileStream = fs.createReadStream(file.filepath);
 
     const params = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: `uploads/${Date.now()}_${file.originalFilename}`,
-      Body: fileStream,
+      Key: `uploads/${Date.now()}_${file.originalname}`,
+      Body: file.buffer,
       ContentType: file.mimetype,
       ACL: 'public-read',
     };
 
-    try {
-      const data = await s3.upload(params).promise();
-      res.status(200).json({ message: 'File uploaded successfully', data });
-    } catch (uploadError) {
-      res.status(500).json({ error: 'Upload failed', details: uploadError });
-    }
-  });
-}
+    const data = await s3.upload(params).promise();
+    res.status(200).json({ message: 'Upload successful', data });
+  } catch (error) {
+    console.error('Upload failed:', error);
+    res.status(500).json({ error: 'Upload failed', details: error.message });
+  }
+});
+
+export default apiRoute;
