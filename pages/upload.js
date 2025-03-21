@@ -25,32 +25,35 @@ export default function Upload() {
       return;
     }
 
-    const formData = new FormData();
-    formData.append('file', file);
-
     try {
-      const res = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      const res = await fetch(`/api/sign-upload?filename=${encodeURIComponent(file.name)}&filetype=${encodeURIComponent(file.type)}`);
+      const { url, key } = await res.json();
+
+      const uploadRes = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': file.type,
+        },
+        body: file,
       });
 
-      const result = await res.json();
-      if (res.ok) {
-        setMessage('File uploaded successfully!');
-        console.log(result);
+      if (uploadRes.ok) {
+        const publicUrl = `https://${process.env.NEXT_PUBLIC_S3_BUCKET_NAME}.s3.${process.env.NEXT_PUBLIC_REGION}.amazonaws.com/${key}`;
+setMessage(`✅ File uploaded! File URL: ${publicUrl}`);
+console.log('File URL:', publicUrl);
+
       } else {
-        setMessage('Upload failed: ' + result.error);
-        console.error(result);
+        throw new Error('Upload to S3 failed');
       }
-    } catch (err) {
-      setMessage('Upload failed');
-      console.error(err);
+    } catch (error) {
+      console.error(error);
+      setMessage('❌ Upload failed');
     }
   };
 
   return (
     <div>
-      <h1>Upload File to S3</h1>
+      <h1>Upload File to S3 (Pre-signed URL)</h1>
       <p>Welcome, {username}!</p>
       <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} />
       <button onClick={handleUpload}>Upload</button>
