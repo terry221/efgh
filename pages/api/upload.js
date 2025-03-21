@@ -1,58 +1,48 @@
 // pages/api/upload.js
-import nextConnect from 'next-connect';
-import multer from 'multer';
 import aws from 'aws-sdk';
+import Busboy from 'busboy';
 
-const upload = multer();
+export const config = {
+  api: {
+    bodyParser: false, // Required for streaming file uploads
+  },
+};
 
-// Setup AWS S3
 const s3 = new aws.S3({
   accessKeyId: process.env.AMPLIFY_ACCESS_KEY_ID,
   secretAccessKey: process.env.AMPLIFY_SECRET_ACCESS_KEY,
   region: process.env.AMPLIFY_REGION,
 });
 
-// Disable default body parser
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
-const apiRoute = nextConnect({
-  onError(error, req, res) {
-    console.error(error);
-    res.status(501).json({ error: `Something went wrong! ${error.message}` });
-  },
-  onNoMatch(req, res) {
-    res.status(405).json({ error: `Method '${req.method}' Not Allowed` });
-  },
-});
+  const busboy = Busboy({ headers: req.headers });
+  let uploadResult = null;
 
-apiRoute.use(upload.single('file'));
-
-apiRoute.post(async (req, res) => {
-  try {
-    const file = req.file;
-
-    if (!file) {
-      return res.status(400).json({ error: 'No file provided' });
-    }
-
+  busboy.on('file', (fieldname, file, filename, encoding, mimetype) => {
     const params = {
       Bucket: process.env.S3_BUCKET_NAME,
-      Key: `uploads/${Date.now()}_${file.originalname}`,
-      Body: file.buffer,
-      ContentType: file.mimetype,
+      Key: `uploads/${Date.now()}_${filename}`,
+      Body: file,
+      ContentType: mimetype,
       ACL: 'public-read',
     };
 
-    const data = await s3.upload(params).promise();
-    res.status(200).json({ message: 'Upload successful', data });
-  } catch (error) {
-    console.error('Upload failed:', error);
-    res.status(500).json({ error: 'Upload failed', details: error.message });
-  }
-});
+    uploadResult = s3.upload(params).promise();
+  });
 
-export default apiRoute;
+  busboy.on('finish', async () => {
+    try {
+      const data = await uploadResult;
+      res.status(200).json({ message: 'File uploaded successfully', data });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: 'Upload failed', details: err.message });
+    }
+  });
+
+  req.pipe(busboy);
+}
